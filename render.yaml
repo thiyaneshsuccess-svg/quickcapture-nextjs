@@ -1,0 +1,24 @@
+# Render blueprint — https://render.com/docs/blueprint-spec
+# Connect the repo on Render and "New + → Blueprint" provisions this service.
+# The free web tier has no persistent disks, so this uses a starter-tier disk
+# to keep data/tasks.json across deploys. Swap disk for a managed Postgres
+# (and the Supabase/Postgres store) if you prefer.
+services:
+  - type: web
+    name: quickcapture
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    disk:
+      name: quickcapture-data
+      mountPath: /app/data
+      sizeGB: 1
+    envVars:
+      - key: QUICKCAPTURE_DATA_DIR
+        value: /app/data
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_TELEMETRY_DISABLED
+        value: "1"

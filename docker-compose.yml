@@ -1,0 +1,29 @@
+# QuickCapture — local container run:  docker compose up --build
+# Open http://localhost:3000
+services:
+  quickcapture:
+    build: .
+    image: quickcapture
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: "3000"
+      # Point this at a named volume or bind mount; the file-backed
+      # task store writes tasks.json here.
+      QUICKCAPTURE_DATA_DIR: /app/data
+    volumes:
+      - quickcapture-data:/app/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)throw 0}).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    restart: unless-stopped
+
+volumes:
+  quickcapture-data:
