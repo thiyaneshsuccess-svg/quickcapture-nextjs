@@ -1,7 +1,7 @@
 import { Pool } from "pg";
 
 import type { Task } from "./types";
-import { validateTaskText } from "./validation";
+import { validateImportedTask, validateTaskText } from "./validation";
 
 /**
  * Postgres-backed task store — the "basic backend" for serverless hosts
@@ -182,6 +182,40 @@ export async function deleteAllTasks(): Promise<number> {
   await ensureSchema();
   const { rowCount } = await getPool().query("DELETE FROM tasks");
   return rowCount ?? 0;
+}
+
+/**
+ * Restores tasks from a backup, preserving ids and timestamps exactly and
+ * skipping rows whose id already exists (ON CONFLICT DO NOTHING). Invalid
+ * rows are silently dropped; valid-but-duplicate rows are counted.
+ */
+export async function importTasks(
+  tasks: unknown[],
+): Promise<{ imported: number; skippedDuplicates: number }> {
+  await ensureSchema();
+  const pool = getPool();
+  let validated = 0;
+  let imported = 0;
+  for (const raw of tasks) {
+    const check = validateImportedTask(raw);
+    if (!check.ok) continue;
+    validated += 1;
+    const { rowCount } = await pool.query(
+      `INSERT INTO tasks (id, text, completed, created_at, completed_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (id) DO NOTHING`,
+      [
+        check.id,
+        check.text,
+        check.completed,
+        check.created_at,
+        check.completed_at,
+        check.updated_at,
+      ],
+    );
+    imported += rowCount ?? 0;
+  }
+  return { imported, skippedDuplicates: validated - imported };
 }
 
 /** Probe used by /health. Never throws. */

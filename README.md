@@ -39,6 +39,7 @@ npm start
 | PATCH  | `/api/tasks/:id`        | Toggle completion (`{ completed }`) |
 | DELETE | `/api/tasks/completed`  | Remove completed tasks           |
 | DELETE | `/api/tasks`            | Remove all tasks                 |
+| POST   | `/api/tasks/import`     | Restore a backup (idempotent)    |
 
 Server-side rules: trim + validate text (1–500 chars), server-generated IDs
 and timestamps, `completed_at`/`updated_at` invariants, newest-first ordering
@@ -107,6 +108,27 @@ Vercel with Postgres (Supabase, Neon, Render…):
    Preview + Development) and redeploy — the Postgres store activates
    automatically; verify with `GET /health` → `"backend": "postgres"`.
    Secrets stay server-side.
+
+## Backups & restore
+
+Data lives in the production Postgres, and an automated snapshot runs
+every day:
+
+- **Daily backup** — the `Daily backup` GitHub Action exports every task
+  from production (`GET /api/tasks`) at 04:30 UTC and commits it to
+  `backups/tasks-<date>.json` (plus a stable `backups/latest.json`), with
+  `[skip ci]` so snapshots never trigger deploys.
+- **Manual backup** — `curl https://quickcapture-nextjs.onrender.com/api/tasks
+  > backups/latest.json`
+- **Restore** — imports preserve ids and timestamps and are idempotent
+  (existing rows are skipped):
+
+  ```bash
+  node scripts/restore.mjs backups/latest.json https://quickcapture-nextjs.onrender.com
+  ```
+
+  Restore targets any deployment running this repo (local, Render, or a
+  fresh host after database loss) — it needs only `POST /api/tasks/import`.
 
 ## Design notes
 

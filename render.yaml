@@ -25,6 +25,7 @@ services:
     buildFilter:
       ignoredPaths:
         - ".github/**"
+        - "backups/**"
     envVars:
       - key: DATABASE_URL
         fromDatabase:

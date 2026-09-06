@@ -1,0 +1,37 @@
+name: Daily backup
+
+on:
+  schedule:
+    # 04:30 UTC daily — snapshots each day's tasks even on the free tier
+    - cron: "30 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Export tasks and commit backup
+        env:
+          APP_URL: https://quickcapture-nextjs.onrender.com
+        run: |
+          set -euo pipefail
+          mkdir -p backups
+          DATE=$(date -u +%F)
+          curl -fsS --max-time 60 "$APP_URL/api/tasks" -o backups/tasks-$DATE.json
+          # latest.json keeps the newest snapshot under a stable name
+          cp backups/tasks-$DATE.json backups/latest.json
+          # Skip the commit when nothing changed since yesterday
+          if git diff --quiet -- backups/ 2>/dev/null; then
+            echo "No changes since the last backup — nothing to commit."
+          fi
+          echo "Backup written: backups/tasks-$DATE.json ($(wc -c < backups/tasks-$DATE.json) bytes)"
+
+      - name: Commit backup
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore(backup): daily task snapshot [skip ci]"
+          file_pattern: backups/*.json
+          skip_fetch: true

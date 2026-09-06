@@ -48,6 +48,10 @@ export const pingDatabase = usingPostgres
   ? postgresStore.pingDatabase
   : async () => true;
 
+export const importTasks = usingPostgres
+  ? postgresStore.importTasks
+  : fileStore.importTasks;
+
 /** Test helper kept for compatibility: point the file store at a directory. */
 export function __setDataDirForTests(dir: string | undefined): void {
   fileStore.__setDataDirForTests(dir);

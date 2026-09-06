@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import type { Task } from "./types";
-import { validateTaskText } from "./validation";
+import { validateImportedTask, validateTaskText } from "./validation";
 
 /**
  * File-backed task store implementing the spec's data contract.
@@ -243,6 +243,45 @@ function sortTasks(tasks: Task[]): Task[] {
     const byCreated = b.created_at.localeCompare(a.created_at);
     return byCreated !== 0 ? byCreated : b.id.localeCompare(a.id);
   });
+}
+
+/**
+ * Restores tasks from a backup, skipping rows whose id already exists in
+ * the store. Ids and timestamps are preserved exactly, so a restore
+ * reproduces the backup faithfully. Used by POST /api/tasks/import.
+ */
+export async function importTasks(
+  tasks: unknown[],
+): Promise<{ imported: number; skippedDuplicates: number }> {
+  const validated: Task[] = [];
+  for (const raw of tasks) {
+    const check = validateImportedTask(raw);
+    if (check.ok) {
+      validated.push({
+        id: check.id,
+        text: check.text,
+        completed: check.completed,
+        created_at: check.created_at,
+        completed_at: check.completed_at,
+        updated_at: check.updated_at,
+      });
+    }
+  }
+
+  const filePath = await resolveWritableFilePath();
+  const lock = await acquireLock(filePath);
+  try {
+    const existing = await readTasksFile(filePath);
+    const ids = new Set(existing.map((t) => t.id));
+    const fresh = validated.filter((t) => !ids.has(t.id));
+    await writeTasksFile(filePath, [...existing, ...fresh]);
+    return {
+      imported: fresh.length,
+      skippedDuplicates: validated.length - fresh.length,
+    };
+  } finally {
+    await lock.release();
+  }
 }
 
 /** Test helper: point the store at an isolated directory. */
