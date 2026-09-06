@@ -22,6 +22,61 @@ const UPDATE_COMPLETION_SQL = `
    WHERE id = $1
 RETURNING id, text, completed, created_at, completed_at, updated_at`;
 
+/**
+ * Idempotent boot-time provisioning: creates the table, indexes, and the
+ * completion-rule trigger on first use, so deploys need no manual psql step
+ * (Render free Postgres and Vercel cannot run init scripts for you).
+ * Runs once per runtime; a failed attempt clears the cache so the next
+ * request retries. Safe under concurrency (IF NOT EXISTS + error tolerance).
+ */
+const SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS tasks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  text VARCHAR(500) NOT NULL,
+  completed BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_tasks_completed ON tasks (completed);
+CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks (created_at DESC);
+
+CREATE OR REPLACE FUNCTION set_task_completion_timestamps()
+RETURNS TRIGGER AS $fn$
+BEGIN
+  IF NEW.completed THEN
+    NEW.completed_at := NOW();
+  ELSE
+    NEW.completed_at := NULL;
+  END IF;
+  NEW.updated_at := NOW();
+  RETURN NEW;
+END;
+$fn$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_tasks_completion ON tasks;
+CREATE TRIGGER trg_tasks_completion
+BEFORE UPDATE ON tasks
+FOR EACH ROW
+EXECUTE FUNCTION set_task_completion_timestamps();
+`;
+
+let schemaReady: Promise<void> | null = null;
+function ensureSchema(): Promise<void> {
+  schemaReady ??= getPool()
+    .query(SCHEMA_SQL)
+    .then(() => undefined)
+    .catch((error) => {
+      schemaReady = null; // allow a retry on the next request
+      const code = (error as { code?: string }).code;
+      // 42P07 duplicate_table / 42710 duplicate_object: a concurrent
+      // runtime won the race — the schema exists, so we can proceed.
+      if (code === "42P07" || code === "42710") return;
+      throw error;
+    });
+  return schemaReady;
+}
+
 function getPool(): Pool {
   globalThis.__quickcapturePgPool ??= new Pool({
     connectionString: process.env.DATABASE_URL,
@@ -59,6 +114,7 @@ interface TaskRow {
 
 /** All tasks, newest first (created_at DESC, id tiebreaker for rapid captures). */
 export async function listTasks(): Promise<Task[]> {
+  await ensureSchema();
   const { rows } = await getPool().query<TaskRow>(
     "SELECT id, text, completed, created_at, completed_at, updated_at FROM tasks ORDER BY created_at DESC, id DESC",
   );
@@ -70,6 +126,7 @@ export async function listTasksByStatus(
   status: "all" | "pending" | "done",
 ): Promise<Task[]> {
   if (status === "all") return listTasks();
+  await ensureSchema();
   const { rows } = await getPool().query<TaskRow>(
     "SELECT id, text, completed, created_at, completed_at, updated_at FROM tasks WHERE completed = $1 ORDER BY created_at DESC, id DESC",
     [status === "done"],
@@ -84,6 +141,7 @@ export async function createTask(rawText: unknown): Promise<
   const validation = validateTaskText(rawText);
   if (!validation.ok) return validation;
 
+  await ensureSchema();
   const { rows } = await getPool().query<TaskRow>(
     "INSERT INTO tasks (text) VALUES ($1) RETURNING id, text, completed, created_at, completed_at, updated_at",
     [validation.text],
@@ -103,6 +161,7 @@ export async function setTaskCompleted(
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
     return { ok: false };
   }
+  await ensureSchema();
   const { rows } = await getPool().query<TaskRow>(UPDATE_COMPLETION_SQL, [
     id,
     completed,
@@ -113,12 +172,14 @@ export async function setTaskCompleted(
 
 /** Deletes every completed task. Returns how many were removed. */
 export async function deleteCompletedTasks(): Promise<number> {
+  await ensureSchema();
   const { rowCount } = await getPool().query("DELETE FROM tasks WHERE completed");
   return rowCount ?? 0;
 }
 
 /** Deletes every task. Returns how many were removed. */
 export async function deleteAllTasks(): Promise<number> {
+  await ensureSchema();
   const { rowCount } = await getPool().query("DELETE FROM tasks");
   return rowCount ?? 0;
 }

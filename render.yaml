@@ -1,10 +1,11 @@
 # Render blueprint — https://render.com/docs/blueprint-spec
 # Connect the repo on Render and "New + → Blueprint" provisions the web
 # service AND the Postgres database, with DATABASE_URL wired automatically.
-# Apply db/schema.sql once after provisioning (see README "Deploy → Render").
 #
 # The web service is stateless: tasks live in the Postgres database below
-# (DATABASE_URL is injected automatically), so data survives redeploys and# restarts even on free plans.
+# (DATABASE_URL is injected automatically), so data survives redeploys and
+# restarts even on free plans. The schema is provisioned automatically on
+# first use — no manual psql step needed.
 
 databases:
   - name: quickcapture-db

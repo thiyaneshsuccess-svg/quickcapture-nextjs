@@ -61,11 +61,12 @@ warm serverless invocations) and parameterized queries only.
 
 1. Provision Postgres (Render free Postgres, Supabase, Neon, or local:
    `docker run -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16`).
-2. Apply the schema once: `psql "$DATABASE_URL" -f db/schema.sql`
-   (idempotent; includes the completion-rule trigger).
-3. Set `DATABASE_URL` in `.env.local` / your host's dashboard — secrets stay
-   server-side only. Restart the app; `GET /health` then reports
-   `"backend": "postgres", "database": "up"`.
+2. Set `DATABASE_URL` in `.env.local` / your host's dashboard — secrets stay
+   server-side only. Restart the app.
+3. That's it: the schema (table, indexes, completion-rule trigger) is
+   provisioned automatically on first use. `GET /health` reports
+   `"backend": "postgres", "database": "up"`. (`db/schema.sql` remains for
+   reference or manual provisioning.)
 
 Works as-is with Supabase's connection string too — no Supabase client
 needed (the old `supabase/schema.sql` remains for reference).
@@ -91,15 +92,15 @@ uptime checks.
 3. Render builds the Dockerfile and provisions the free Postgres instance
    from the blueprint; `DATABASE_URL` is injected automatically, so tasks
    survive redeploys and restarts even on the web service's free plan.
-4. First boot only: apply `db/schema.sql` once (Render free Postgres does
-   not run init scripts for you), then the service is fully durable.
+   The schema self-provisions on first request — nothing to run by hand.
 
 ### Option C — Vercel + Postgres (serverless)
 
 The file store doesn't fit serverless (no writable persistent disk), so pair
 Vercel with Postgres (Supabase, Neon, Render…):
 
-1. Provision Postgres and apply `db/schema.sql` once.
+1. Provision Postgres (Supabase, Neon, Render…) — no schema step needed;
+   the store self-provisions on first use.
 2. Push to GitHub and import the repo on Vercel (or connect the existing
    project).
 3. In the Vercel dashboard set the env var `DATABASE_URL` (Production +
