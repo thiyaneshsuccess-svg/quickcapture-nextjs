@@ -11,6 +11,11 @@ services:
     healthCheckPath: /health
     dockerfilePath: ./Dockerfile
     dockerContext: .
+    # CI-only changes (workflow files) should not consume free-tier build
+    # minutes or trigger deploys.
+    buildFilter:
+      ignoredPaths:
+        - ".github/**"
     envVars:
       - key: QUICKCAPTURE_DATA_DIR
         value: /app/data
