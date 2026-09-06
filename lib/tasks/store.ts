@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import type { Task } from "./types";
@@ -26,6 +27,31 @@ function getDataFilePath(): string {
   const dataDir =
     process.env.QUICKCAPTURE_DATA_DIR ?? path.join(process.cwd(), "data");
   return path.join(dataDir, "tasks.json");
+}
+
+/**
+ * Probes that the configured data directory is writable; if not (bad env
+ * config, read-only filesystem), falls back to a writable temp dir so the
+ * app keeps working rather than failing every write with a 500. Resolved
+ * once and cached for the process lifetime.
+ */
+let cachedFilePath: string | null = null;
+async function resolveWritableFilePath(): Promise<string> {
+  if (cachedFilePath) return cachedFilePath;
+  const preferred = getDataFilePath();
+  try {
+    await fs.mkdir(path.dirname(preferred), { recursive: true });
+    const probe = `${preferred}.probe`;
+    await fs.writeFile(probe, "ok");
+    await fs.unlink(probe);
+    cachedFilePath = preferred;
+  } catch (error) {
+    console.error(
+      `QuickCapture: data dir not writable (${(error as Error).message}); falling back to os.tmpdir()`,
+    );
+    cachedFilePath = path.join(os.tmpdir(), "quickcapture-tasks.json");
+  }
+  return cachedFilePath;
 }
 
 async function readTasksFile(filePath: string): Promise<Task[]> {
@@ -106,7 +132,7 @@ function sleep(ms: number): Promise<void> {
 
 /** All tasks, newest first (created_at DESC, id tiebreaker for rapid captures). */
 export async function listTasks(): Promise<Task[]> {
-  const filePath = getDataFilePath();
+  const filePath = await resolveWritableFilePath();
   const lock = await acquireLock(filePath);
   try {
     const tasks = await readTasksFile(filePath);
@@ -143,7 +169,7 @@ export async function createTask(rawText: unknown): Promise<
     updated_at: now,
   };
 
-  const filePath = getDataFilePath();
+  const filePath = await resolveWritableFilePath();
   const lock = await acquireLock(filePath);
   try {
     const tasks = await readTasksFile(filePath);
@@ -161,7 +187,7 @@ export async function setTaskCompleted(
   id: string,
   completed: boolean,
 ): Promise<{ ok: true; task: Task } | { ok: false }> {
-  const filePath = getDataFilePath();
+  const filePath = await resolveWritableFilePath();
   const lock = await acquireLock(filePath);
   try {
     const tasks = await readTasksFile(filePath);
@@ -182,7 +208,7 @@ export async function setTaskCompleted(
 
 /** Deletes every completed task. Returns how many were removed. */
 export async function deleteCompletedTasks(): Promise<number> {
-  const filePath = getDataFilePath();
+  const filePath = await resolveWritableFilePath();
   const lock = await acquireLock(filePath);
   try {
     const tasks = await readTasksFile(filePath);
@@ -199,7 +225,7 @@ export async function deleteCompletedTasks(): Promise<number> {
 
 /** Deletes every task. Returns how many were removed. */
 export async function deleteAllTasks(): Promise<number> {
-  const filePath = getDataFilePath();
+  const filePath = await resolveWritableFilePath();
   const lock = await acquireLock(filePath);
   try {
     const tasks = await readTasksFile(filePath);
