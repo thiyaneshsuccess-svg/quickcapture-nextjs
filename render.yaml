@@ -1,8 +1,16 @@
 # Render blueprint — https://render.com/docs/blueprint-spec
-# Connect the repo on Render and "New + → Blueprint" provisions this service.
-# NOTE: the free web tier has no persistent disks and sleeps after ~15 min
-# idle (tasks reset on wake/redeploy). For durable storage move to a paid
-# disk or swap lib/tasks/store.ts for the Supabase/Postgres store.
+# Connect the repo on Render and "New + → Blueprint" provisions the web
+# service AND the Postgres database, with DATABASE_URL wired automatically.
+# Apply db/schema.sql once after provisioning (see README "Deploy → Render").
+#
+# The web service is stateless: tasks live in the Postgres database below
+# (DATABASE_URL is injected automatically), so data survives redeploys and# restarts even on free plans.
+
+databases:
+  - name: quickcapture-db
+    databaseName: quickcapture
+    plan: free
+
 services:
   - type: web
     name: quickcapture
@@ -17,6 +25,10 @@ services:
       ignoredPaths:
         - ".github/**"
     envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: quickcapture-db
+          property: connectionString
       - key: QUICKCAPTURE_DATA_DIR
         value: /app/data
       - key: NODE_ENV

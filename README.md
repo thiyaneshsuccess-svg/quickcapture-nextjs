@@ -10,8 +10,10 @@ requirements, flow spec, UI/UX brief, schema, implementation plan).
 
 - **Next.js 16** (App Router) + **React 19** + **TypeScript**
 - **Tailwind CSS v4**
-- **Server-side persistence** through API routes with a file-backed store
-  (atomic, locked writes to `data/tasks.json`)
+- **Server-side persistence** through API routes with two interchangeable
+  stores behind one facade (`lib/tasks/store.ts`): a file-backed store
+  (atomic, locked writes to `data/tasks.json`) and a **Postgres store**
+  (activated automatically when `DATABASE_URL` is set)
 
 ## Run it
 
@@ -44,19 +46,29 @@ with a stable tiebreaker for rapid captures.
 
 ## Persistence model
 
-The default store (`lib/tasks/store.ts`) writes `data/tasks.json` atomically
-with an O_EXCL lock file and stale-lock recovery, so refresh/reopen and
-concurrent requests are safe without any external services.
+The store is chosen by environment — no code changes anywhere else:
 
-### Upgrading to Postgres/Supabase
+| `DATABASE_URL` | Backend | File |
+| -------------- | ------- | ---- |
+| unset | File-backed JSON (`data/tasks.json`, atomic + locked) | `lib/tasks/file-store.ts` |
+| set | Postgres (Render, Supabase, Neon, local docker…) | `lib/tasks/postgres-store.ts` |
 
-1. Create the tables: run `supabase/schema.sql` (includes the completion-rule
-   trigger).
-2. `npm install @supabase/supabase-js`
-3. Re-implement `lib/tasks/store.ts` against the Supabase client — the API
-   routes and UI are store-agnostic and need no changes.
-4. Set `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` (or your Postgres
-   connection string) in `.env.local`; keep secrets server-side only.
+The file store writes atomically with an O_EXCL lock file and stale-lock
+recovery. The Postgres store uses one shared lazy `pg` Pool (works with
+warm serverless invocations) and parameterized queries only.
+
+### Wiring a Postgres backend
+
+1. Provision Postgres (Render free Postgres, Supabase, Neon, or local:
+   `docker run -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16`).
+2. Apply the schema once: `psql "$DATABASE_URL" -f db/schema.sql`
+   (idempotent; includes the completion-rule trigger).
+3. Set `DATABASE_URL` in `.env.local` / your host's dashboard — secrets stay
+   server-side only. Restart the app; `GET /health` then reports
+   `"backend": "postgres", "database": "up"`.
+
+Works as-is with Supabase's connection string too — no Supabase client
+needed (the old `supabase/schema.sql` remains for reference).
 
 ## Deploy
 
@@ -72,24 +84,28 @@ Mount a volume at `/app/data` (or set `QUICKCAPTURE_DATA_DIR`) so tasks
 survive container restarts. `/health` is available for load balancers and
 uptime checks.
 
-### Option B — Render (one-click blueprint)
+### Option B — Render (blueprint: web service + Postgres)
 
 1. Push this folder to a GitHub repository.
 2. On render.com: **New + → Blueprint** → pick the repo → **Apply**.
-3. Render builds the Dockerfile, attaches a 1 GB disk at `/app/data`, and
-   uses `/health` as the health check. You get a live HTTPS URL.
+3. Render builds the Dockerfile and provisions the free Postgres instance
+   from the blueprint; `DATABASE_URL` is injected automatically, so tasks
+   survive redeploys and restarts even on the web service's free plan.
+4. First boot only: apply `db/schema.sql` once (Render free Postgres does
+   not run init scripts for you), then the service is fully durable.
 
-### Option C — Vercel + Supabase (serverless)
+### Option C — Vercel + Postgres (serverless)
 
 The file store doesn't fit serverless (no writable persistent disk), so pair
-Vercel with Postgres:
+Vercel with Postgres (Supabase, Neon, Render…):
 
-1. Create a Supabase project and run `supabase/schema.sql`.
-2. Implement the Supabase variant of `lib/tasks/store.ts` (see
-   "Upgrading to Postgres/Supabase" above).
-3. Push to GitHub and import the repo on Vercel; set the database env vars
-   (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`) in the Vercel dashboard —
-   secrets stay server-side.
+1. Provision Postgres and apply `db/schema.sql` once.
+2. Push to GitHub and import the repo on Vercel (or connect the existing
+   project).
+3. In the Vercel dashboard set the env var `DATABASE_URL` (Production +
+   Preview + Development) and redeploy — the Postgres store activates
+   automatically; verify with `GET /health` → `"backend": "postgres"`.
+   Secrets stay server-side.
 
 ## Design notes
 
